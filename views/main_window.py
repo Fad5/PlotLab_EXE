@@ -674,67 +674,85 @@ class YoungModulusApp(QMainWindow):
         Defl = S[peaks[0]]
         V = Defl / T[peaks[0]]
 
-        if len(peaks) >= 4:
-            cycle_index = 3
+        # Берем последний цикл (между предпоследним и последним пиком)
+        if len(peaks) >= 2:
+            cycle_index = len(peaks) - 1  # Индекс последнего пика
+            cycle_length = peaks[cycle_index] - peaks[cycle_index - 1]
+            Start = peaks[cycle_index] - cycle_length + 1
+            Finish = peaks[cycle_index]
         else:
-            cycle_index = 2
+            print("Недостаточно пиков для выделения цикла")
+            return False
 
-        cycle_index = 1
 
-        cycle_length = peaks[cycle_index] - peaks[cycle_index - 1]
-        Start = peaks[cycle_index] - cycle_length + 1
-        Finish = peaks[cycle_index]
+        Start = peaks[2] - peaks[0] + 1
+        Finish = peaks[2] + 1
 
-        print(Start, 'Start')
-        print(Finish, 'Finish')
+        print('Start', Start)
+        print('Finish', Finish)
 
-        F1 = F[Start:Finish + 1]
-        S1 = S[Start:Finish + 1]
+        F1 = F[Start-1:Finish]
+        S1 = S[Start-1:Finish]
 
         w = int(np.ceil(sr * 2))
+
         n = len(F1) // w
-        
+
         print(w, 'Ширина окна')
         print(n, 'Количество циклов')
 
+        # Точный аналог MATLAB кода
+        Start = peaks[2] - peaks[0]  # locs(3)-locs(1)+1 (индексация с 0 в Python)
+        Finish = peaks[2]  # locs(3)
+
+        F1 = F[Start:Finish]  # F(Start:Finish)
+        S1 = S[Start:Finish]  # S(Start:Finish)
+
+        w = 2 * math.ceil(sr)  # w=2*ceil(sr)
+        n = math.floor(len(F1) / w)  # floor(length(F1)/w)
+
         Pr = np.zeros(n)
-        E1 = np.zeros(n)
+        E1 = np.zeros(n) 
         Eps1 = np.zeros(n)
 
+        print(f"Размер F1: {len(F1)}, w: {w}, n: {n}")
+
         for i in range(n):
-            idx1 = i * w
-            idx2 = (i + 1) * w - 1
+            # Точная MATLAB индексация (начинается с 1)
+            idx1 = i * w  # (i-1)*w+1 в MATLAB → i*w в Python (т.к. i начинается с 0)
+            idx2 = (i + 1) * w - 1  # i*w в MATLAB → (i+1)*w-1 в Python
+            
+            # Проверяем границы (в MATLAB нет проверки, но добавим для безопасности)
             if idx2 >= len(F1):
                 idx2 = len(F1) - 1
-            Pr[i] = (F1[idx1] + F1[idx2]) / 2 / area * 1e-6
-            delta_F = F1[idx2] - F1[idx1]
-            delta_S = S1[idx2] - S1[idx1]
+            
+            # Точные MATLAB формулы:
+            Pr[i] = (F1[idx1] + F1[idx2]) / (2 * area)  # (F1((i-1)*w+1)+F1(i*w))/2/A
+            
+            delta_F = F1[idx2] - F1[idx1]  # F1(i*w)-F1((i-1)*w+1)
+            delta_S = S1[idx2] - S1[idx1]  # S1(i*w)-S1((i-1)*w+1)
+            
+            # E1(i)=(F1(i*w)-F1((i-1)*w+1))./A./((S1(i*w)-S1((i-1)*w+1))./h0)
             if delta_S != 0:
-                E1[i] = (delta_F / area * 1e-6) / (delta_S / initial_height)
-            Eps1[i] = (S1[idx1] + S1[idx2]) / 2 / initial_height
+                E1[i] = (delta_F / area) / (delta_S / initial_height)
+            else:
+                E1[i] = 0
+            
+            # Eps1(i)=(S1((i-1)*w+1)+S1(i*w))/2/h0
+            Eps1[i] = (S1[idx1] + S1[idx2]) / (2 * initial_height)
 
+        # Точный аналог MATLAB коррекции нуля
         if len(Pr) > 0:
-            Pr = Pr - Pr[0]
+            del_val = Pr[0]  # del=Pr(1)
+            for i in range(len(Pr)):
+                Pr[i] = Pr[i] - del_val  # Pr(i)=Pr(i)-del
 
-        Pr, E1, Eps1 = Pr[3:], E1[3:], Eps1[3:]
-        f = 0
-        self.Eps1 = Eps1[int(len(Eps1)/2)+f:] 
-        self.E1 = E1[int(len(E1)/2)+f:]  
-        self.Pr = Pr[int(len(Pr)/2)+f:] 
+        # Убираем лишние преобразования которые были в старом коде
+        self.Eps1 = Eps1 * 100  # преобразование в %
+        self.E1 = E1  # оставляем как есть (в МПа)
+        self.Pr = Pr  # оставляем как есть (в МПа)
 
-        if self.Pr.size > 2:
-            min_Pr = np.min(self.Pr)
-            self.Eps1 = self.Eps1 - self.Eps1[0]
-            Pr_ = self.Pr + (-min_Pr)
-        else:
-            Pr_ = self.Pr
-
-        print(len(Pr), 'Pr')
-
-
-        self.E1 = self.E1[:] * 1_000_000
-        self.Eps1 = self.Eps1[:] * 100 
-        self.Pr = Pr_[:] * 1_000_000
+        print(f"Результат: Pr[{len(Pr)}], E1[{len(E1)}], Eps1[{len(Eps1)}]")
 
 
     def find_loading_starts(self, data, threshold, min_interval=10):
